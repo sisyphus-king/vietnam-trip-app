@@ -380,12 +380,12 @@
   async function offlineSheet(VNAPP) {
     var list = planTiles(VNAPP.DATA);
     var mb = Math.round(list.length * 28 / 1024);
-    var box = document.createElement('div');
-    box.innerHTML =
+    // VNAPP.sheet 收的是 HTML 字符串 + onMount(box, close)，不是 DOM 节点
+    var html =
       '<h3 class="serif" style="margin:4px 26px 2px 0">离线地图</h3>' +
       '<div class="small" style="line-height:1.6;margin-top:6px">' +
       '地图是从网上现拉的。<b>不先存下来，到越南没网时地图就是一块白板。</b><br>' +
-      '存的是你行程覆盖的那几座城市，缩放到能看清街道那一档。' +
+      '存的是你行程覆盖的那几座城市，缩放到看得清街道那一档。' +
       '<b>连着 Wi-Fi 存，别用流量。</b></div>' +
       '<div class="small" id="off-stat" style="margin-top:12px">正在算…</div>' +
       '<div style="height:8px;background:var(--tile-cream);border-radius:2px;overflow:hidden;margin:10px 0">' +
@@ -393,39 +393,37 @@
       '<div class="ic-btns" style="margin-top:10px">' +
       '<button class="btn gold big" id="off-go" type="button">开始下载</button></div>' +
       '<div class="ic-btns"><button class="btn ghost" id="off-del" type="button">删掉已存的离线地图</button></div>';
-    var close = VNAPP.sheet(box);
 
-    var stat = box.querySelector('#off-stat'), bar = box.querySelector('#off-bar');
-    var go = box.querySelector('#off-go'), del = box.querySelector('#off-del');
+    return VNAPP.sheet(html, function (box) {
+      var stat = box.querySelector('#off-stat'), bar = box.querySelector('#off-bar');
+      var go = box.querySelector('#off-go'), del = box.querySelector('#off-del');
 
-    function paint(have) {
-      stat.innerHTML = '一共 <b>' + list.length + '</b> 张瓦片，约 <b>' + mb + ' MB</b>　' +
-        (have >= list.length ? '<b style="color:var(--accent)">已经全部存好了</b>'
-                             : '已存 <b>' + have + '</b> 张');
-      bar.style.width = Math.round(have / list.length * 100) + '%';
-    }
-    var have = await countCached(list);
-    paint(have);
+      function paint(have) {
+        stat.innerHTML = '一共 <b>' + list.length + '</b> 张瓦片，约 <b>' + mb + ' MB</b>　' +
+          (have >= list.length ? '<b style="color:var(--accent)">已经全部存好了</b>'
+                               : '已存 <b>' + have + '</b> 张');
+        bar.style.width = Math.round(have / list.length * 100) + '%';
+      }
+      countCached(list).then(paint);
 
-    go.addEventListener('click', async function () {
-      if (go.dataset.running) { dlAbort = true; return; }
-      go.dataset.running = '1'; go.textContent = '停下'; dlAbort = false;
-      var r = await download(list, function (done, fail) {
-        bar.style.width = Math.round(done / list.length * 100) + '%';
-        stat.innerHTML = '下载中 <b>' + done + '</b> / ' + list.length +
-          (fail ? '　失败 ' + fail : '');
+      go.addEventListener('click', async function () {
+        if (go.dataset.running) { dlAbort = true; return; }
+        go.dataset.running = '1'; go.textContent = '停下'; dlAbort = false;
+        var r = await download(list, function (done, fail) {
+          bar.style.width = Math.round(done / list.length * 100) + '%';
+          stat.innerHTML = '下载中 <b>' + done + '</b> / ' + list.length + (fail ? '　失败 ' + fail : '');
+        });
+        delete go.dataset.running; go.textContent = '开始下载';
+        paint(await countCached(list));
+        VNAPP.toast(dlAbort ? '停下了，存过的还在'
+          : (r.fail ? '存好了，' + r.fail + ' 张没下来' : '离线地图存好了'));
       });
-      delete go.dataset.running; go.textContent = '开始下载';
-      paint(await countCached(list));
-      VNAPP.toast(dlAbort ? '停下了，存过的还在' :
-        (r.fail ? '存好了，' + r.fail + ' 张没下来' : '离线地图存好了'));
-    });
 
-    del.addEventListener('click', async function () {
-      await caches.delete(TILE_CACHE);
-      paint(0); VNAPP.toast('已删掉');
+      del.addEventListener('click', async function () {
+        await caches.delete(TILE_CACHE);
+        paint(0); VNAPP.toast('已删掉');
+      });
     });
-    return close;
   }
 
   // #app 只有 min-height 没有 height，.map-tab 的 height:100% 落不下来，

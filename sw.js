@@ -1,6 +1,6 @@
 // 越南 10 天 · Service Worker
 // ⚠️ 发版必须改 VERSION（哪怕只改一位），否则手机上装的还是旧版——缓存名带着它，不改就不清旧缓存。
-const VERSION = '2026-09-08-tiles2';
+const VERSION = '2026-09-08-tiles3';
 const CACHE_NAME = 'vn10-' + VERSION;
 // 瓦片缓存名不带版本：瓦片本身不会变，发一次版就把她下好的离线地图全清掉太蠢了
 const TILES = 'vn10-tiles';
