@@ -9,6 +9,7 @@
   var VN_ZOOM = 6;
 
   var map = null;        // 当前 Leaflet map 实例
+  var tileLayer = null;  // 下载离线瓦片时借它的 getTileUrl，保证地址跟地图请求的一致
   var itemsLayer = null; // 承载所有可见 marker 的 layerGroup
   var itemMarkers = [];  // [{id,type,done,marker}]
   var greyMarkers = [];  // [{zone,name,marker}]
@@ -95,6 +96,7 @@
       '<label class="chip toggle"><input type="checkbox" id="vnmap-toggle-grey"> 灰点</label>' +
       '<label class="chip toggle"><input type="checkbox" id="vnmap-toggle-done" checked> 已打卡</label>' +
       '<span class="vnmap-count" id="vnmap-count"></span>' +
+      '<button class="chip" id="vnmap-offline" type="button">离线地图</button>' +
       '</div>' +
       '</div>' +
       '<div id="vnmap-wrap"><div id="vnmap"></div></div>' +
@@ -129,6 +131,7 @@
       attribution: '© OpenStreetMap © CARTO',
       maxZoom: 19
     });
+    tileLayer = tiles;
     tiles.on('tileerror', function () { /* 离线/加载失败，静默 */ });
     tiles.addTo(map);
 
@@ -237,6 +240,8 @@
     if (greyToggle) greyToggle.addEventListener('change', function () { filter.showGrey = !!greyToggle.checked; redraw(); });
     var doneToggle = root.querySelector('#vnmap-toggle-done');
     if (doneToggle) doneToggle.addEventListener('change', function () { filter.showDone = !!doneToggle.checked; redraw(); });
+    var offBtn = root.querySelector('#vnmap-offline');
+    if (offBtn) offBtn.addEventListener('click', function () { offlineSheet(VNAPP); });
 
     // -- 视图定位 --
     function fitToZone(zoneId) {
@@ -277,6 +282,147 @@
     } else {
       fitDefault();
     }
+  }
+
+  // ── 离线地图 ──────────────────────────────────────────────
+  // 瓦片是从网上现拉的。不预先存下来，她到越南断网时地图就是一块白板。
+  var TILE_CACHE = 'vn10-tiles', ZMIN = 11, ZMAX = 14, PAD = 0.015;
+  var dlAbort = false;
+
+  function lonlat2tile(lat, lon, z) {
+    var n = Math.pow(2, z);
+    var la = lat * Math.PI / 180;
+    return [Math.floor((lon + 180) / 360 * n),
+            Math.floor((1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n)];
+  }
+
+  // 只存她真去的城市——按行程里的 city 取，不写死
+  function tripCities(DATA) {
+    var set = {};
+    (DATA.days || []).forEach(function (d) {
+      String(d.city || '').split(/[→·]/).forEach(function (c) {
+        c = c.trim(); if (c) set[c] = 1;
+      });
+    });
+    return set;
+  }
+
+  function planTiles(DATA) {
+    var want = tripCities(DATA), by = {};
+    Object.keys(DATA.items || {}).forEach(function (k) {
+      var it = DATA.items[k];
+      if (!it.lat || !it.lon || !want[it.city]) return;
+      (by[it.city] = by[it.city] || []).push(it);
+    });
+    var seen = {}, out = [];
+    Object.keys(by).forEach(function (c) {
+      var list = by[c];
+      var la = list.map(function (i) { return i.lat; }), lo = list.map(function (i) { return i.lon; });
+      var n = Math.max.apply(null, la) + PAD, ss = Math.min.apply(null, la) - PAD;
+      var w = Math.min.apply(null, lo) - PAD, e = Math.max.apply(null, lo) + PAD;
+      for (var z = ZMIN; z <= ZMAX; z++) {
+        var a = lonlat2tile(n, w, z), b = lonlat2tile(ss, e, z);
+        for (var x = a[0]; x <= b[0]; x++) {
+          for (var y = a[1]; y <= b[1]; y++) {
+            var key = z + '/' + x + '/' + y;
+            if (seen[key]) continue;
+            seen[key] = 1; out.push({ x: x, y: y, z: z });
+          }
+        }
+      }
+    });
+    return out;
+  }
+
+  function tileUrl(t) {
+    if (tileLayer && tileLayer.getTileUrl) {
+      var c = L.point(t.x, t.y); c.z = t.z;
+      return tileLayer.getTileUrl(c);           // 跟地图自己请求的地址完全一致
+    }
+    var sub = ['a', 'b', 'c'][Math.abs(t.x + t.y) % 3];
+    var r = (window.devicePixelRatio > 1) ? '@2x' : '';
+    return 'https://' + sub + '.basemaps.cartocdn.com/rastertiles/voyager/' +
+           t.z + '/' + t.x + '/' + t.y + r + '.png';
+  }
+
+  async function countCached(list) {
+    if (!window.caches) return 0;
+    var c = await caches.open(TILE_CACHE), n = 0;
+    for (var i = 0; i < list.length; i++) if (await c.match(tileUrl(list[i]))) n++;
+    return n;
+  }
+
+  async function download(list, onProgress) {
+    var c = await caches.open(TILE_CACHE);
+    var done = 0, fail = 0, i = 0, CONC = 6;
+    async function worker() {
+      while (i < list.length && !dlAbort) {
+        var t = list[i++], u = tileUrl(t);
+        try {
+          if (!(await c.match(u))) {
+            var r = await fetch(u, { mode: 'cors' });
+            if (r.ok) await c.put(u, r); else fail++;
+          }
+        } catch (e) { fail++; }
+        done++;
+        if (done % 5 === 0 || done === list.length) onProgress(done, fail);
+      }
+    }
+    var ws = []; for (var k = 0; k < CONC; k++) ws.push(worker());
+    await Promise.all(ws);
+    onProgress(done, fail);
+    return { done: done, fail: fail };
+  }
+
+  async function offlineSheet(VNAPP) {
+    var list = planTiles(VNAPP.DATA);
+    var mb = Math.round(list.length * 28 / 1024);
+    var box = document.createElement('div');
+    box.innerHTML =
+      '<h3 class="serif" style="margin:4px 26px 2px 0">离线地图</h3>' +
+      '<div class="small" style="line-height:1.6;margin-top:6px">' +
+      '地图是从网上现拉的。<b>不先存下来，到越南没网时地图就是一块白板。</b><br>' +
+      '存的是你行程覆盖的那几座城市，缩放到能看清街道那一档。' +
+      '<b>连着 Wi-Fi 存，别用流量。</b></div>' +
+      '<div class="small" id="off-stat" style="margin-top:12px">正在算…</div>' +
+      '<div style="height:8px;background:var(--tile-cream);border-radius:2px;overflow:hidden;margin:10px 0">' +
+      '<div id="off-bar" style="height:100%;width:0;background:var(--gold);transition:width .2s"></div></div>' +
+      '<div class="ic-btns" style="margin-top:10px">' +
+      '<button class="btn gold big" id="off-go" type="button">开始下载</button></div>' +
+      '<div class="ic-btns"><button class="btn ghost" id="off-del" type="button">删掉已存的离线地图</button></div>';
+    var close = VNAPP.sheet(box);
+
+    var stat = box.querySelector('#off-stat'), bar = box.querySelector('#off-bar');
+    var go = box.querySelector('#off-go'), del = box.querySelector('#off-del');
+
+    function paint(have) {
+      stat.innerHTML = '一共 <b>' + list.length + '</b> 张瓦片，约 <b>' + mb + ' MB</b>　' +
+        (have >= list.length ? '<b style="color:var(--accent)">已经全部存好了</b>'
+                             : '已存 <b>' + have + '</b> 张');
+      bar.style.width = Math.round(have / list.length * 100) + '%';
+    }
+    var have = await countCached(list);
+    paint(have);
+
+    go.addEventListener('click', async function () {
+      if (go.dataset.running) { dlAbort = true; return; }
+      go.dataset.running = '1'; go.textContent = '停下'; dlAbort = false;
+      var r = await download(list, function (done, fail) {
+        bar.style.width = Math.round(done / list.length * 100) + '%';
+        stat.innerHTML = '下载中 <b>' + done + '</b> / ' + list.length +
+          (fail ? '　失败 ' + fail : '');
+      });
+      delete go.dataset.running; go.textContent = '开始下载';
+      paint(await countCached(list));
+      VNAPP.toast(dlAbort ? '停下了，存过的还在' :
+        (r.fail ? '存好了，' + r.fail + ' 张没下来' : '离线地图存好了'));
+    });
+
+    del.addEventListener('click', async function () {
+      await caches.delete(TILE_CACHE);
+      paint(0); VNAPP.toast('已删掉');
+    });
+    return close;
   }
 
   // #app 只有 min-height 没有 height，.map-tab 的 height:100% 落不下来，
