@@ -379,7 +379,8 @@
 
   async function offlineSheet(VNAPP) {
     var list = planTiles(VNAPP.DATA);
-    var mb = Math.round(list.length * 28 / 1024);
+    // 9-10 KB/张是实测值（826 张实际占 8 MB）。别按 28KB 估，会吓着人。
+    var mb = Math.max(1, Math.round(list.length * 10 / 1024));
     // VNAPP.sheet 收的是 HTML 字符串 + onMount(box, close)，不是 DOM 节点
     var html =
       '<h3 class="serif" style="margin:4px 26px 2px 0">离线地图</h3>' +
