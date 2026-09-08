@@ -1,6 +1,6 @@
 // 越南 10 天 · Service Worker
 // ⚠️ 发版必须改 VERSION（哪怕只改一位），否则手机上装的还是旧版——缓存名带着它，不改就不清旧缓存。
-const VERSION = '2026-09-08-lock';
+const VERSION = '2026-09-08-map3';
 const CACHE_NAME = 'vn10-' + VERSION;
 const PRECACHE = ['index.html','lock.js','data.enc.js','app.js','tab-today.js','tab-map.js','tab-pool.js','tab-bag.js','tab-spin.js',
   'manifest.json','icons/icon.svg','icons/icon-180.png','icons/icon-512.png',

@@ -598,6 +598,8 @@
     if (!tabsByName[name]) return;
     state.ui.tab = name;
     state.ui.params = params || {};
+    // 给 body 打上当前页，CSS 才能按页调头部（地图页要把花砖压扁腾高度）
+    try { document.body.setAttribute('data-tab', name); } catch (e) {}
     if (params && params.day) state.ui.day = params.day;
     persist();
     renderTabbar();

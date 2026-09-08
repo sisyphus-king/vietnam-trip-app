@@ -279,15 +279,43 @@
     }
   }
 
+  // #app 只有 min-height 没有 height，.map-tab 的 height:100% 落不下来，
+  // 地图就只剩 min-height 那 420px。这里按视口现算，让它填到图例上方。
+  function fitMapHeight() {
+    var wrap = document.getElementById('vnmap-wrap');
+    if (!wrap) return;
+    var top = wrap.getBoundingClientRect().top;
+    var lg = document.querySelector('.map-tab .legend');
+    var tb = document.querySelector('.tabbar');
+    var lgH = lg ? lg.getBoundingClientRect().height : 0;
+    var tbH = tb ? tb.getBoundingClientRect().height : 64;
+    // body 本来就有 padding-bottom 给固定标签栏留位，再减一次标签栏高度就多减了，
+    // 页面会多出一截空白可以滚。取两者较大的那个，只减一次。
+    var padB = parseFloat(getComputedStyle(document.body).paddingBottom) || 0;
+    var h = Math.round(window.innerHeight - top - lgH - Math.max(padB, tbH) - 10);
+    wrap.style.height = Math.max(300, h) + 'px';
+    if (map) { try { map.invalidateSize(); } catch (e) { /* 静默 */ } }
+  }
+
+  var fitBound = false;
+  function bindFit() {
+    if (fitBound) return;
+    fitBound = true;
+    ['resize', 'orientationchange'].forEach(function (ev) {
+      window.addEventListener(ev, function () { setTimeout(fitMapHeight, 120); });
+    });
+  }
+
   window.VNAPP.registerTab('map', {
     kicker: 'BẢN ĐỒ',
     title: '地图',
     icon: '🗺',
     render: render,
     onShow: function () {
-      if (map) {
-        try { map.invalidateSize(); } catch (e) { /* 静默 */ }
-      }
+      bindFit();
+      // 两拍：第一拍等布局落定，第二拍兜住 iOS 上工具栏收起后视口再变一次
+      requestAnimationFrame(fitMapHeight);
+      setTimeout(fitMapHeight, 260);
     }
   });
 })();
