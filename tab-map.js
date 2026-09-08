@@ -129,6 +129,9 @@
     map = L.map(mapEl, { scrollWheelZoom: true, tap: true });
     var tiles = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
       attribution: '© OpenStreetMap © CARTO',
+      // crossOrigin 必须开：不开的话瓦片是「不透明响应」，
+      // service worker 那边 r.ok 恒为 false，一张也存不下来（Carto 的 CORS 是全开的）
+      crossOrigin: true,
       maxZoom: 19
     });
     tileLayer = tiles;

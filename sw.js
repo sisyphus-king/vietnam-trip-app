@@ -1,6 +1,6 @@
 // 越南 10 天 · Service Worker
 // ⚠️ 发版必须改 VERSION（哪怕只改一位），否则手机上装的还是旧版——缓存名带着它，不改就不清旧缓存。
-const VERSION = '2026-09-08-tiles';
+const VERSION = '2026-09-08-tiles2';
 const CACHE_NAME = 'vn10-' + VERSION;
 // 瓦片缓存名不带版本：瓦片本身不会变，发一次版就把她下好的离线地图全清掉太蠢了
 const TILES = 'vn10-tiles';
@@ -23,7 +23,11 @@ self.addEventListener('fetch', e => {
   // 就算存过也要等一次网络往返——地图每次打开都慢，离线更是直接白板。
   if (u.hostname.endsWith('tile.openstreetmap.org') || u.hostname.endsWith('basemaps.cartocdn.com')) {
     e.respondWith(caches.open(TILES).then(c => c.match(e.request).then(hit => hit ||
-      fetch(e.request).then(r => { if (r.ok) c.put(e.request, r.clone()); return r; }))));
+      fetch(e.request).then(r => {
+        // 不透明响应（no-cors）的 ok 恒为 false，但照样能存，别漏掉
+        if (r.ok || r.type === 'opaque') c.put(e.request, r.clone());
+        return r;
+      }))));
     return;
   }
   // ignoreSearch：index.html 里脚本挂了 ?v=<版本>，不忽略 query 就配不上预缓存的 app.js，离线直接白屏
